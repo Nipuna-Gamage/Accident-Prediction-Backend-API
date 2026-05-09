@@ -92,6 +92,14 @@ def load_models():
 
 
 # ============================================================================
+# LOAD MODELS AT MODULE LEVEL
+# This ensures models are loaded when Gunicorn imports this module on Render.
+# Without this, `if __name__ == '__main__'` never runs under Gunicorn.
+# ============================================================================
+load_models()
+
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
@@ -744,8 +752,9 @@ if __name__ == '__main__':
     print("AI TRAFFIC ACCIDENT PREDICTION API")
     print("=" * 80)
     
-    # Load models
-    if load_models():
+    models_ready = all([xgb_model is not None, lstm_model is not None, scaler is not None])
+    
+    if models_ready:
         print("\n✅ Server ready to start!")
         print("📍 Running on: http://localhost:5000")
         print("📚 API Documentation: http://localhost:5000/\n")

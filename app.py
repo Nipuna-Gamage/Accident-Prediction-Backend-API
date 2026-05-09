@@ -16,6 +16,7 @@ from tensorflow.keras.models import load_model
 from datetime import datetime
 import os
 import logging
+import time
 from functools import wraps
 
 # ============================================================================
@@ -38,6 +39,10 @@ SCALER_PATH = 'models/scaler.pkl'
 xgb_model = None
 lstm_model = None
 scaler = None
+
+# Simple TTL cache for hotspots (avoids rerunning 20 LSTM predictions per request)
+_hotspot_cache = {}          # key: district_filter -> (timestamp, data)
+HOTSPOT_CACHE_TTL = 120     # seconds
 
 
 # ============================================================================
@@ -603,6 +608,23 @@ def get_hotspots():
     try:
         district_filter = request.args.get('district', None)
         limit = request.args.get('limit', 10, type=int)
+
+        # --- Cache check: return cached result if still fresh ---
+        cache_key = str(district_filter)
+        cached = _hotspot_cache.get(cache_key)
+        if cached and (time.time() - cached['ts']) < HOTSPOT_CACHE_TTL:
+            logger.info(f"Returning cached hotspots for district={district_filter}")
+            cached_data = cached['data']
+            return jsonify({
+                'success': True,
+                'count': len(cached_data[:limit]),
+                'hotspots': cached_data[:limit],
+                'timestamp': datetime.now().isoformat(),
+                'source': 'Live ML Predictions (cached)',
+                'cache_age_seconds': round(time.time() - cached['ts'], 1)
+            }), 200
+        # --------------------------------------------------------
+
         
         # Major Sri Lankan cities with coordinates
         cities = [
@@ -702,7 +724,10 @@ def get_hotspots():
         
         # Sort by risk probability (highest first)
         hotspots.sort(key=lambda x: x['risk_probability'], reverse=True)
-        
+
+        # Store in cache (full sorted list; limit applied on read)
+        _hotspot_cache[cache_key] = {'ts': time.time(), 'data': hotspots}
+
         # Limit results
         hotspots = hotspots[:limit]
         
